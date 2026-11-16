@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package auction;
 
-option go_package = "homework5/grpc/auction";
+option go_package = "homework5/grpc;pb";
 
 service communicationService {
     rpc Connect (connectReq) returns (connectAck);
