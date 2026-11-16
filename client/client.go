@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	pb "homework5/grpc"
 	"log"
 	"os"
 
@@ -16,16 +17,22 @@ type Client struct {
 	id         int32
 }
 
+func newClient() *Client {
+	return &Client{}
+}
+
 func main() {
-	n := flag.Int("port", -1, "Connect to server port")
+	port := flag.Int("port", -1, "Connect to server port")
 	flag.Parse()
 
-	if *n == -1 {
+	if *port == -1 {
 		flag.Usage()
 		os.Exit(2)
 	}
 
-	conn, err := grpc.NewClient(fmt.Sprintf(":%d", n),
+	c := newClient()
+
+	conn, err := grpc.NewClient(fmt.Sprintf(":%d", port),
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("dial: %v", err)
@@ -35,12 +42,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	idResp, err := pb.NewChatServiceClient(conn).GetId(ctx, &pb.RequestId{Time: getClock(0)})
-	myId = idResp.ClientId
+	idResp, err := pb.NewCommunicationServiceClient(conn).Connect(ctx, &pb.ConnectReq{})
 	if err != nil {
 		log.Fatalf("dial: %v", err)
 	}
+	c.id = idResp.Id
+	c.leaderPort = idResp.LeaderPort
 
-	conResp, err := pb.NewChatServiceClient(conn).Connect(ctx, &postConnection)
-	stream = conResp
-}
+}	
