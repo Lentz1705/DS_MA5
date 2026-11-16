@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package auction;
+
+option go_package = "homework5/grpc/auction";
+
+service auctionService {
+    rpc Connect (connectReq) returns (connectAck);
+    rpc Bid (bidReq) returns (bidAck);
+    rpc Result (resultReq) returns (resultAck);
+}
+
+message connectReq {}
+
+message connectAck {
+    int32 id = 1;
+    int32 leaderPort = 2;
+}
+message bidReq {
+    int32 amount = 1;
+    int32 id = 2;
+}
+
+message bidAck {
+    oneof result {
+        Success success = 1;
+        Failure failure = 2;
+        Exception exception = 3;
+    }
+}
+
+message Success {}
+
+message Failure {
+   string reason = 1;
+}
+
+message Exception {
+    string reason = 1;
+}
+
+message resultReq {}
+
+message resultAck {
+    oneof result {
+        int32 highestBid = 1;
+        int32 winnerId = 2;
+    }
+}
