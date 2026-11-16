@@ -4,10 +4,12 @@ package auction;
 
 option go_package = "homework5/grpc/auction";
 
-service auctionService {
+service communicationService {
     rpc Connect (connectReq) returns (connectAck);
     rpc Bid (bidReq) returns (bidAck);
     rpc Result (resultReq) returns (resultAck);
+
+    rpc Elect (electReq) returns (electAck);
 }
 
 message connectReq {}
@@ -46,4 +48,10 @@ message resultAck {
         int32 highestBid = 1;
         int32 winnerId = 2;
     }
+}
+
+message electReq {}
+
+message electAck {
+    int32 leaderPort = 1;
 }
