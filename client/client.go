@@ -84,7 +84,7 @@ func (c *Client) loop(wg *sync.WaitGroup) {
 			}
 			switch r := resp.Result.(type) {
 			case *pb.BidAck_Success:
-				log.Println("Succesful bid. You are now winning")
+				log.Printf("%d was a Succesful bid. You are now winning", bidAmount)
 			case *pb.BidAck_Failure:
 				log.Println(r.Failure.Reason)
 			case *pb.BidAck_Exception:

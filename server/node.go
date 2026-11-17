@@ -18,13 +18,16 @@ import (
 type Node struct {
 	pb.UnimplementedCommunicationServiceServer
 	leaderPort    int32
+	leaderId      int32
 	id            int32
 	port          int32
-	replicaCons   []int32
+	replicaPorts  map[int32]int32
 	cIdCount      int32
 	winnerId      int32
 	highestBid    int32
 	activeAuction bool
+	totalNodes    int32
+	replicaConns  map[int32]*grpc.ClientConn
 }
 
 func main() {
@@ -64,9 +67,18 @@ func main() {
 func (n *Node) auction() {
 	n.activeAuction = true
 
-	time.Sleep(300 * time.Second)
+	time.Sleep(60 * time.Second)
 
 	n.activeAuction = false
+}
+
+func (n *Node) createConnection(id int32) {
+	conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", n.replicaPorts[id]), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Printf("Couldn't create connection to port: %d", n.replicaPorts[id])
+		return
+	}
+	n.replicaConns[id] = conn
 }
 
 func newNode(id int, totalNodes int) *Node {
@@ -74,13 +86,19 @@ func newNode(id int, totalNodes int) *Node {
 	node.port = 50000 + int32(id)
 	node.cIdCount = 0
 	node.id = int32(id)
-	node.leaderPort = 50000 + int32(totalNodes)
+	node.totalNodes = int32(totalNodes)
+	node.leaderId = int32(totalNodes)
+	node.leaderPort = 50000 + node.leaderId
+	node.replicaPorts = make(map[int32]int32)
+	node.replicaConns = make(map[int32]*grpc.ClientConn)
 	for i := 1; i <= totalNodes; i++ {
-		port := 50000 + int32(i)
-		if node.port == port {
+		id := int32(i)
+		port := 50000 + id
+		if node.id == id {
 			continue
 		}
-		node.replicaCons = append(node.replicaCons, port)
+		node.replicaPorts[id] = port
+		node.createConnection(id)
 	}
 	return &node
 }
@@ -90,18 +108,13 @@ func (n *Node) election() {
 		time.Sleep(1000 * time.Millisecond)
 		lp := n.leaderPort
 		higherAlive := false
-		totalNodes := len(n.replicaCons)
-		for i := totalNodes - 1; i >= int(n.id)-1; i-- {
-			conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", n.replicaCons[i]), grpc.WithTransportCredentials(insecure.NewCredentials()))
-			if err != nil {
-				continue
-			}
-
+		for i := n.totalNodes; i > n.id; i-- {
 			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-			Resp, err := pb.NewCommunicationServiceClient(conn).Elect(ctx, &pb.ElectReq{})
+			Resp, err := pb.NewCommunicationServiceClient(n.replicaConns[int32(i)]).Elect(ctx, &pb.ElectReq{})
 			if err == nil {
 				higherAlive = true
 				n.leaderPort = Resp.LeaderPort
+				n.leaderId = int32(i)
 				cancel()
 				break
 			} else {
@@ -147,11 +160,8 @@ func (n *Node) Connect(ctx context.Context, msg *pb.ConnectReq) (*pb.ConnectAck,
 			}, nil
 		}
 	}
-	conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", n.leaderPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
+	conn := n.replicaConns[n.leaderId]
+
 	return pb.NewCommunicationServiceClient(conn).Connect(ctx, msg)
 }
 
@@ -223,12 +233,8 @@ func (n *Node) SyncReplicas(ctx context.Context, msg *pb.Update) (*pb.UpdateAck,
 }
 
 func (n *Node) synchronize(msg *pb.Update) {
-	for _, v := range n.replicaCons {
-		conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", v), grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-			continue
-		}
+	for _, conn := range n.replicaConns {
 		ctx := context.Background()
-		_, err = pb.NewCommunicationServiceClient(conn).SyncReplicas(ctx, msg)
+		pb.NewCommunicationServiceClient(conn).SyncReplicas(ctx, msg)
 	}
 }
