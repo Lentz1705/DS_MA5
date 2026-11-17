@@ -24,7 +24,7 @@ type Node struct {
 	cIdCount    int32
 	winnerId    int32
 	highestBid  int32
-	
+	activeAuction bool
 }
 
 func main() {
@@ -48,7 +48,7 @@ func main() {
 	n := newNode(*id, *totalNodes)
 	pb.RegisterCommunicationServiceServer(srv, n)
 
-	go n.process()
+	go n.election()
 
 	log.Printf("Node %d listening on %s", id, port)
 	if err := srv.Serve(lis); err != nil {
@@ -70,36 +70,36 @@ func newNode(id int, totalNodes int) *Node {
 	return &node
 }
 
-func (n *Node) process() {
+func (n *Node) election() {
 	for {
 		time.Sleep(500 * time.Millisecond)
-		go n.election()
-	}
-}
+		lp := n.leaderPort
+		count := 0
+		totalNodes := len(n.replicaCons)
+		for i := totalNodes - 1; i > int(n.id); i-- {
+			conn, err := grpc.NewClient(fmt.Sprintf("%d", n.replicaCons[i]), grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if err != nil {
+				log.Fatalf("dial: %v", err)
+				continue
+			}
 
-func (n *Node) election() {
-	count := 0
-	totalNodes := len(n.replicaCons)
-	for i := totalNodes - 1; i > int(n.id); i-- {
-		conn, err := grpc.NewClient(fmt.Sprintf("%d", n.replicaCons[i]), grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-			log.Fatalf("dial: %v", err)
-			continue
-		}
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			Resp, err := pb.NewCommunicationServiceClient(conn).Elect(ctx, &pb.ElectReq{})
+			if err == nil {
+				n.leaderPort = Resp.LeaderPort
+				cancel()
+				continue
+			}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-		Resp, err := pb.NewCommunicationServiceClient(conn).Elect(ctx, &pb.ElectReq{})
-		if err == nil {
-			n.leaderPort = Resp.LeaderPort
+			count++
 			cancel()
-			continue
 		}
-
-		count++
-		cancel()
-	}
-	if totalNodes-count == int(n.id) {
-		n.leaderPort = n.port
+		if totalNodes-count == int(n.id) {
+			n.leaderPort = n.port
+		}
+		if lp != n.leaderPort {
+			log.Printf("Leader changed from %d to %d", lp, n.leaderPort)
+		}
 	}
 }
 
@@ -159,7 +159,19 @@ func (n *Node) Bid(ctx context.Context, msg *pb.BidReq) (*pb.BidAck, error) {
 }
 
 func (n *Node) Result(ctx context.Context, msg *pb.ResultReq) (*pb.ResultAck, error) {
-	panic("implement me")
+	if (n.activeAuction) {
+		return &pb.ResultAck{
+			Result: &pb.ResultAck_HighestBid{
+				HighestBid: n.highestBid,
+			},
+		}, nil
+	} else {
+		return &pb.ResultAck{
+			Result: &pb.ResultAck_WinnerId{
+				WinnerId: n.winnerId,
+			},
+		}, nil
+	}
 }
 
 func (n *Node) isLeader() bool {
