@@ -2,26 +2,37 @@ package main
 
 import (
 	"bufio"
-	"fmt"
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
+var cmd []*exec.Cmd
+var amountOfProcess = 5
+
 func main() {
-	var cmd *exec.Cmd
-	var amountOfProcess = 5
-	for i := 0; i < amountOfProcess; i++ {
-		id := fmt.Sprintf("-id %d", i)
-		totalNodes := fmt.Sprintf("-totalNodes %d", amountOfProcess)
-		cmd = exec.Command("./bin/node", id, totalNodes)
-	}
-	cmd.Stdout = os.Stdout
-	if err := cmd.Run(); err != nil {
-		log.Println(err)
+	cmd = make([]*exec.Cmd, amountOfProcess+1)
+	for i := 1; i <= amountOfProcess; i++ {
+		cmd[i] = exec.Command("./server/node",
+			"-id", strconv.Itoa(i),
+			"-totalNodes", strconv.Itoa(amountOfProcess),
+		)
+		log.Println(cmd[i].Args)
+		cmd[i].Stderr = os.Stderr
+		cmd[i].Stdout = os.Stdout
+		if err := cmd[i].Start(); err != nil {
+			log.Println(err)
+		}
 	}
 	loop()
+}
+
+func killAll() {
+	for i := 1; i <= amountOfProcess; i++ {
+		cmd[i].Process.Kill()
+	}
 }
 
 func loop() {
@@ -30,15 +41,22 @@ func loop() {
 		eof := scanner.Scan()
 		err := scanner.Err()
 		if !eof || err != nil {
-			// kill and return
+			killAll()
 			return
 		}
 		args := strings.Split(scanner.Text(), " ")
 		switch args[0] {
 		case "kill":
-			// kill process at id args[1]
+			if args[1] == "all" {
+				killAll()
+			}
+			idx, err := strconv.Atoi(args[1])
+			if err != nil {
+				break
+			}
+			cmd[idx].Process.Kill()
 		case "stop":
-			// kill all and return
+			killAll()
 			return
 		default:
 
