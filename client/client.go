@@ -8,6 +8,9 @@ import (
 	pb "homework5/grpc"
 	"log"
 	"os"
+	"strconv"
+	"strings"
+	"sync"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -50,7 +53,9 @@ func main() {
 	c.conn, _ = grpc.NewClient(fmt.Sprintf(":%d", resp.LeaderPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	c.id = resp.Id
 	c.leaderPort = resp.LeaderPort
-
+	wg := sync.WaitGroup{}
+	go c.loop(&wg)
+	wg.Wait()
 }
 
 func (c *Client) reconnect() {
@@ -74,7 +79,8 @@ func (c *Client) reconnect() {
 	c.leaderPort = resp.LeaderPort
 }
 
-func loop() {
+func (c *Client) loop(wg *sync.WaitGroup) {
+	defer wg.Done()
 	var scanner = bufio.NewScanner(os.Stdin)
 	for {
 		eof := scanner.Scan()
@@ -82,12 +88,44 @@ func loop() {
 		if !eof || err != nil {
 			return
 		}
-		switch scanner.Text() {
+		args := strings.Split(scanner.Text(), " ")
+		ctx := context.Background()
+		switch args[0] {
 		case "bid":
-
+			bidAmount, err := strconv.Atoi(args[1])
+			if err != nil {
+				break
+			}
+			resp, err := pb.NewCommunicationServiceClient(c.conn).Bid(ctx, &pb.BidReq{Amount: int32(bidAmount), Id: c.id})
+			if err != nil {
+				c.reconnect()
+			}
+			switch r := resp.Result.(type) {
+			case *pb.BidAck_Success:
+				log.Printf("Succesful bid. You are now winning")
+			case *pb.BidAck_Failure:
+				log.Printf(r.Failure.Reason)
+			case *pb.BidAck_Exception:
+				log.Printf(r.Exception.Reason)
+			}
 		case "result":
+			resp, err := pb.NewCommunicationServiceClient(c.conn).Result(ctx, &pb.ResultReq{})
+			if err != nil {
+				c.reconnect()
+			}
+			switch r := resp.Result.(type) {
+			case *pb.ResultAck_HighestBid:
+				log.Printf("The current highest bid is %d", r.HighestBid)
+			case *pb.ResultAck_WinnerId:
+				if r.WinnerId == c.id {
+					log.Printf("You won the auction")
+				} else {
+					log.Printf("You lost the auction")
+				}
+			}
 
 		case "exit":
+			return
 
 		default:
 

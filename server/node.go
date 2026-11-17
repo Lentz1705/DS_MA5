@@ -94,7 +94,6 @@ func (n *Node) election() {
 		for i := totalNodes - 1; i >= int(n.id)-1; i-- {
 			conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", n.replicaCons[i]), grpc.WithTransportCredentials(insecure.NewCredentials()))
 			if err != nil {
-				log.Fatalf("dial: %v", err)
 				continue
 			}
 
@@ -106,7 +105,6 @@ func (n *Node) election() {
 				cancel()
 				break
 			} else {
-				log.Print(err.Error())
 				cancel()
 			}
 		}
