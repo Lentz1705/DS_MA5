@@ -52,10 +52,21 @@ func main() {
 
 	go n.election()
 
+	time.Sleep(500 * time.Millisecond)
+	go n.auction()
+
 	log.Printf("Node %d listening on %d", n.id, port)
 	if err := srv.Serve(lis); err != nil {
 		log.Fatalf("serve: %v", err)
 	}
+}
+
+func (n *Node) auction() {
+	n.activeAuction = true
+
+	time.Sleep(60 * time.Second)
+
+	n.activeAuction = false
 }
 
 func newNode(id int, totalNodes int) *Node {
@@ -81,8 +92,7 @@ func (n *Node) election() {
 		higherAlive := false
 		totalNodes := len(n.replicaCons)
 		for i := totalNodes - 1; i >= int(n.id)-1; i-- {
-			//log.Printf("%d conn to %d", n.id, n.replicaCons[i])
-			conn, err := grpc.NewClient(fmt.Sprintf("%d", n.replicaCons[i]), grpc.WithTransportCredentials(insecure.NewCredentials()))
+			conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", n.replicaCons[i]), grpc.WithTransportCredentials(insecure.NewCredentials()))
 			if err != nil {
 				log.Fatalf("dial: %v", err)
 				continue
@@ -117,19 +127,27 @@ func (n *Node) Elect(ctx context.Context, msg *pb.ElectReq) (*pb.ElectAck, error
 
 func (n *Node) Connect(ctx context.Context, msg *pb.ConnectReq) (*pb.ConnectAck, error) {
 	if n.leaderPort == n.port {
-		n.cIdCount++
-		update := &pb.Update{
-			Update: &pb.Update_SyncClientReq{
-				SyncClientReq: &pb.SyncClientCountReq{
-					CIdCount: n.cIdCount,
+		if msg.Id == -1 {
+			n.cIdCount++
+			update := &pb.Update{
+				Update: &pb.Update_SyncClientReq{
+					SyncClientReq: &pb.SyncClientCountReq{
+						CIdCount: n.cIdCount,
+					},
 				},
-			},
+			}
+			n.synchronize(update)
+			return &pb.ConnectAck{
+				Id:         n.cIdCount,
+				LeaderPort: n.leaderPort,
+			}, nil
+
+		} else {
+			return &pb.ConnectAck{
+				Id:         msg.Id,
+				LeaderPort: n.leaderPort,
+			}, nil
 		}
-		n.synchronize(update)
-		return &pb.ConnectAck{
-			Id:         n.cIdCount,
-			LeaderPort: n.leaderPort,
-		}, nil
 	}
 	conn, err := grpc.NewClient(fmt.Sprintf("localhost:%d", n.leaderPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -140,6 +158,15 @@ func (n *Node) Connect(ctx context.Context, msg *pb.ConnectReq) (*pb.ConnectAck,
 }
 
 func (n *Node) Bid(ctx context.Context, msg *pb.BidReq) (*pb.BidAck, error) {
+	if !n.activeAuction {
+		return &pb.BidAck{
+			Result: &pb.BidAck_Exception{
+				Exception: &pb.Exception{
+					Reason: "The auction is currently not active",
+				},
+			},
+		}, nil
+	}
 	if n.highestBid < msg.Amount {
 		n.highestBid = msg.Amount
 		n.winnerId = msg.Id

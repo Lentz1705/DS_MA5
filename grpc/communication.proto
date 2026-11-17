@@ -13,7 +13,9 @@ service communicationService {
     rpc SyncReplicas (update) returns (updateAck);
 }
 
-message connectReq {}
+message connectReq {
+    int32 id = 1;
+}
 
 message connectAck {
     int32 id = 1;
