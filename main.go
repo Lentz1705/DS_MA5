@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"log"
 	"os"
 	"os/exec"
@@ -10,9 +11,13 @@ import (
 )
 
 var cmd []*exec.Cmd
-var amountOfProcess = 5
+var amountOfProcess int
 
 func main() {
+	N := flag.Int("n", 5, "amount of nodes")
+	flag.Parse()
+	amountOfProcess = *N
+
 	cmd = make([]*exec.Cmd, amountOfProcess+1)
 	for i := 1; i <= amountOfProcess; i++ {
 		cmd[i] = exec.Command("./server/node",
