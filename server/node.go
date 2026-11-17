@@ -64,7 +64,7 @@ func main() {
 func (n *Node) auction() {
 	n.activeAuction = true
 
-	time.Sleep(60 * time.Second)
+	time.Sleep(300 * time.Second)
 
 	n.activeAuction = false
 }
@@ -147,7 +147,7 @@ func (n *Node) Connect(ctx context.Context, msg *pb.ConnectReq) (*pb.ConnectAck,
 			}, nil
 		}
 	}
-	conn, err := grpc.NewClient(fmt.Sprintf("localhost:%d", n.leaderPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", n.leaderPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +209,7 @@ func (n *Node) isLeader() bool {
 	return n.leaderPort == n.port
 }
 
-func (n *Node) syncReplicas(ctx context.Context, msg *pb.Update) (*pb.UpdateAck, error) {
+func (n *Node) SyncReplicas(ctx context.Context, msg *pb.Update) (*pb.UpdateAck, error) {
 	switch r := msg.Update.(type) {
 	case *pb.Update_SyncAuctionreq:
 		n.winnerId = r.SyncAuctionreq.WinnerId
@@ -223,14 +223,12 @@ func (n *Node) syncReplicas(ctx context.Context, msg *pb.Update) (*pb.UpdateAck,
 }
 
 func (n *Node) synchronize(msg *pb.Update) {
-	for i := 0; i < int(n.id); i++ {
-		conn, err := grpc.NewClient(fmt.Sprintf("%d", n.replicaCons[i]), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	for _, v := range n.replicaCons {
+		conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", v), grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
 			continue
 		}
-
-		ctx, cancel := context.WithCancel(context.Background())
-		pb.NewCommunicationServiceClient(conn).SyncReplicas(ctx, msg)
-		cancel()
+		ctx := context.Background()
+		_, err = pb.NewCommunicationServiceClient(conn).SyncReplicas(ctx, msg)
 	}
 }

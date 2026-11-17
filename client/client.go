@@ -1,9 +1,8 @@
-package client
+package main
 
 import (
 	"bufio"
 	"context"
-	"flag"
 	"fmt"
 	pb "homework5/grpc"
 	"log"
@@ -27,46 +26,26 @@ func newClient() *Client {
 }
 
 func main() {
-	port := flag.Int("port", -1, "Connect to server port")
-	flag.Parse()
-
-	if *port == -1 {
-		flag.Usage()
-		os.Exit(2)
-	}
-
 	c := newClient()
 
-	conn, err := grpc.NewClient(fmt.Sprintf(":%d", port),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		log.Fatalf("dial: %v", err)
-	}
-	defer conn.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	resp, err := pb.NewCommunicationServiceClient(conn).Connect(ctx, &pb.ConnectReq{Id: c.id})
-	if err != nil {
-		log.Fatalf("dial: %v", err)
-	}
-	c.conn, _ = grpc.NewClient(fmt.Sprintf(":%d", resp.LeaderPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	c.id = resp.Id
-	c.leaderPort = resp.LeaderPort
+	c.connect()
+	log.Printf("connected")
 	wg := sync.WaitGroup{}
+	wg.Add(1)
 	go c.loop(&wg)
 	wg.Wait()
 }
 
-func (c *Client) reconnect() {
+func (c *Client) connect() {
 	startPort := 50001
 	endPort := startPort + 500
 	var conn *grpc.ClientConn
 	var err error
 	for i := startPort; i < endPort; i++ {
-		conn, err = grpc.NewClient(fmt.Sprintf(":%d"),
+		conn, err = grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", i),
 			grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err == nil {
+			log.Printf("We have a connection")
 			break
 		}
 	}
@@ -77,6 +56,7 @@ func (c *Client) reconnect() {
 	}
 	c.conn, _ = grpc.NewClient(fmt.Sprintf(":%d", resp.LeaderPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	c.leaderPort = resp.LeaderPort
+	c.id = resp.Id
 }
 
 func (c *Client) loop(wg *sync.WaitGroup) {
@@ -98,20 +78,24 @@ func (c *Client) loop(wg *sync.WaitGroup) {
 			}
 			resp, err := pb.NewCommunicationServiceClient(c.conn).Bid(ctx, &pb.BidReq{Amount: int32(bidAmount), Id: c.id})
 			if err != nil {
-				c.reconnect()
+				c.connect()
+				log.Println("Server unavailable. Try again")
+				break
 			}
 			switch r := resp.Result.(type) {
 			case *pb.BidAck_Success:
-				log.Printf("Succesful bid. You are now winning")
+				log.Println("Succesful bid. You are now winning")
 			case *pb.BidAck_Failure:
-				log.Printf(r.Failure.Reason)
+				log.Println(r.Failure.Reason)
 			case *pb.BidAck_Exception:
-				log.Printf(r.Exception.Reason)
+				log.Println(r.Exception.Reason)
 			}
 		case "result":
 			resp, err := pb.NewCommunicationServiceClient(c.conn).Result(ctx, &pb.ResultReq{})
 			if err != nil {
-				c.reconnect()
+				c.connect()
+				log.Println("Server unavailable. Try again")
+				break
 			}
 			switch r := resp.Result.(type) {
 			case *pb.ResultAck_HighestBid:

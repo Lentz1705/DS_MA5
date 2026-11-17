@@ -74,5 +74,4 @@ message syncAuctionReq {
     int32 highestBid = 2;
 }
 
-message updateAck {
-}
+message updateAck {}
