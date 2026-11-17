@@ -17,13 +17,13 @@ import (
 
 type Node struct {
 	pb.UnimplementedCommunicationServiceServer
-	leaderPort  int32
-	id          int32
-	port        int32
-	replicaCons []int32
-	cIdCount    int32
-	winnerId    int32
-	highestBid  int32
+	leaderPort    int32
+	id            int32
+	port          int32
+	replicaCons   []int32
+	cIdCount      int32
+	winnerId      int32
+	highestBid    int32
 	activeAuction bool
 }
 
@@ -48,9 +48,11 @@ func main() {
 	n := newNode(*id, *totalNodes)
 	pb.RegisterCommunicationServiceServer(srv, n)
 
+	time.Sleep(time.Second * 1)
+
 	go n.election()
 
-	log.Printf("Node %d listening on %s", id, port)
+	log.Printf("Node %d listening on %d", n.id, port)
 	if err := srv.Serve(lis); err != nil {
 		log.Fatalf("serve: %v", err)
 	}
@@ -60,6 +62,8 @@ func newNode(id int, totalNodes int) *Node {
 	node := Node{}
 	node.port = 50000 + int32(id)
 	node.cIdCount = 0
+	node.id = int32(id)
+	node.leaderPort = 50000 + int32(totalNodes)
 	for i := 1; i <= totalNodes; i++ {
 		port := 50000 + int32(i)
 		if node.port == port {
@@ -72,11 +76,12 @@ func newNode(id int, totalNodes int) *Node {
 
 func (n *Node) election() {
 	for {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(1000 * time.Millisecond)
 		lp := n.leaderPort
-		count := 0
+		higherAlive := false
 		totalNodes := len(n.replicaCons)
-		for i := totalNodes - 1; i > int(n.id); i-- {
+		for i := totalNodes - 1; i >= int(n.id)-1; i-- {
+			//log.Printf("%d conn to %d", n.id, n.replicaCons[i])
 			conn, err := grpc.NewClient(fmt.Sprintf("%d", n.replicaCons[i]), grpc.WithTransportCredentials(insecure.NewCredentials()))
 			if err != nil {
 				log.Fatalf("dial: %v", err)
@@ -86,19 +91,20 @@ func (n *Node) election() {
 			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 			Resp, err := pb.NewCommunicationServiceClient(conn).Elect(ctx, &pb.ElectReq{})
 			if err == nil {
+				higherAlive = true
 				n.leaderPort = Resp.LeaderPort
 				cancel()
-				continue
+				break
+			} else {
+				log.Print(err.Error())
+				cancel()
 			}
-
-			count++
-			cancel()
 		}
-		if totalNodes-count == int(n.id) {
+		if !higherAlive {
 			n.leaderPort = n.port
 		}
 		if lp != n.leaderPort {
-			log.Printf("Leader changed from %d to %d", lp, n.leaderPort)
+			log.Printf("%d Leader changed from %d to %d", n.id, lp, n.leaderPort)
 		}
 	}
 }
@@ -110,7 +116,7 @@ func (n *Node) Elect(ctx context.Context, msg *pb.ElectReq) (*pb.ElectAck, error
 }
 
 func (n *Node) Connect(ctx context.Context, msg *pb.ConnectReq) (*pb.ConnectAck, error) {
-    if n.leaderPort == n.port {
+	if n.leaderPort == n.port {
 		n.cIdCount++
 		update := &pb.Update{
 			Update: &pb.Update_SyncClientReq{
@@ -120,21 +126,21 @@ func (n *Node) Connect(ctx context.Context, msg *pb.ConnectReq) (*pb.ConnectAck,
 			},
 		}
 		n.synchronize(update)
-        return &pb.ConnectAck{
-			Id:		 n.cIdCount,
-            LeaderPort: n.leaderPort,
-        }, nil
-    }
-    conn, err := grpc.NewClient(fmt.Sprintf("localhost:%d", n.leaderPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
-    if err != nil {
-        return nil, err
-    }
-    defer conn.Close()
-    return pb.NewCommunicationServiceClient(conn).Connect(ctx, msg)
+		return &pb.ConnectAck{
+			Id:         n.cIdCount,
+			LeaderPort: n.leaderPort,
+		}, nil
+	}
+	conn, err := grpc.NewClient(fmt.Sprintf("localhost:%d", n.leaderPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	return pb.NewCommunicationServiceClient(conn).Connect(ctx, msg)
 }
 
 func (n *Node) Bid(ctx context.Context, msg *pb.BidReq) (*pb.BidAck, error) {
-	if (n.highestBid < msg.Amount) {
+	if n.highestBid < msg.Amount {
 		n.highestBid = msg.Amount
 		n.winnerId = msg.Id
 		update := &pb.Update{
@@ -159,7 +165,7 @@ func (n *Node) Bid(ctx context.Context, msg *pb.BidReq) (*pb.BidAck, error) {
 }
 
 func (n *Node) Result(ctx context.Context, msg *pb.ResultReq) (*pb.ResultAck, error) {
-	if (n.activeAuction) {
+	if n.activeAuction {
 		return &pb.ResultAck{
 			Result: &pb.ResultAck_HighestBid{
 				HighestBid: n.highestBid,
