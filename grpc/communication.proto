@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package auction;
+package communication;
 
 option go_package = "homework5/grpc;pb";
 
@@ -10,6 +10,7 @@ service communicationService {
     rpc Result (resultReq) returns (resultAck);
 
     rpc Elect (electReq) returns (electAck);
+    rpc SyncReplicas (update) returns (updateAck);
 }
 
 message connectReq {}
@@ -54,4 +55,22 @@ message electReq {}
 
 message electAck {
     int32 leaderPort = 1;
+}
+
+message update{
+    oneof update{
+        syncClientCountReq syncClientReq = 1;
+        syncAuctionReq syncAuctionreq = 2;
+    }
+}
+message syncClientCountReq {
+    int32 cIdCount = 1;
+}
+
+message syncAuctionReq {
+    int32 winnerId = 1;
+    int32 highestBid = 2;
+}
+
+message updateAck {
 }
