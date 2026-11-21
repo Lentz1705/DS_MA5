@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	pb "homework5/grpc"
@@ -28,6 +29,7 @@ type Node struct {
 	activeAuction bool
 	totalNodes    int32
 	replicaConns  map[int32]*grpc.ClientConn
+	mu            sync.Mutex
 }
 
 func main() {
@@ -54,7 +56,6 @@ func main() {
 	time.Sleep(time.Second * 1)
 
 	go n.election()
-
 	time.Sleep(500 * time.Millisecond)
 	go n.auction()
 
@@ -65,17 +66,23 @@ func main() {
 }
 
 func (n *Node) auction() {
+	n.mu.Lock()
 	n.activeAuction = true
+	n.mu.Unlock()
 
 	time.Sleep(60 * time.Second)
 
+	n.mu.Lock()
 	n.activeAuction = false
+	n.mu.Unlock()
 }
 
 func (n *Node) createConnection(id int32) {
-	conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", n.replicaPorts[id]), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	//no mutex cus not concurrent during init
+	port := n.replicaPorts[id]
+	conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", port), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Printf("Couldn't create connection to port: %d", n.replicaPorts[id])
+		log.Printf("Couldn't create connection to port: %d", port)
 		return
 	}
 	n.replicaConns[id] = conn
@@ -106,37 +113,54 @@ func newNode(id int, totalNodes int) *Node {
 func (n *Node) election() {
 	for {
 		time.Sleep(1000 * time.Millisecond)
-		lp := n.leaderPort
 		higherAlive := false
-		for i := n.totalNodes; i > n.id; i-- {
+		n.mu.Lock()
+		lp := n.leaderPort
+		tn := n.totalNodes
+		id := n.id
+		n.mu.Unlock()
+		for i := tn; i > id; i-- {
+			n.mu.Lock()
+			repconn := n.replicaConns[int32(i)]
+			n.mu.Unlock()
 			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-			Resp, err := pb.NewCommunicationServiceClient(n.replicaConns[int32(i)]).Elect(ctx, &pb.ElectReq{})
+			Resp, err := pb.NewCommunicationServiceClient(repconn).Elect(ctx, &pb.ElectReq{})
 			if err == nil {
 				higherAlive = true
+				n.mu.Lock()
 				n.leaderPort = Resp.LeaderPort
 				n.leaderId = int32(i)
+				n.mu.Unlock()
 				cancel()
 				break
 			} else {
 				cancel()
 			}
 		}
+		n.mu.Lock()
 		if !higherAlive {
 			n.leaderPort = n.port
 		}
 		if lp != n.leaderPort {
 			log.Printf("%d Leader changed from %d to %d", n.id, lp, n.leaderPort)
 		}
+		n.mu.Unlock()
 	}
 }
 
 func (n *Node) Elect(ctx context.Context, msg *pb.ElectReq) (*pb.ElectAck, error) {
+	n.mu.Lock()
+	lp := n.leaderPort
+	n.mu.Unlock()
+
 	return &pb.ElectAck{
-		LeaderPort: n.leaderPort,
+		LeaderPort: lp,
 	}, nil
 }
 
 func (n *Node) Connect(ctx context.Context, msg *pb.ConnectReq) (*pb.ConnectAck, error) {
+	n.mu.Lock()
+	lp := n.leaderPort
 	if n.leaderPort == n.port {
 		if msg.Id == -1 {
 			n.cIdCount++
@@ -147,26 +171,32 @@ func (n *Node) Connect(ctx context.Context, msg *pb.ConnectReq) (*pb.ConnectAck,
 					},
 				},
 			}
+			idC := n.cIdCount
+			n.mu.Unlock()
 			n.synchronize(update)
 			return &pb.ConnectAck{
-				Id:         n.cIdCount,
-				LeaderPort: n.leaderPort,
+				Id:         idC,
+				LeaderPort: lp,
 			}, nil
 
 		} else {
+			n.mu.Unlock()
 			return &pb.ConnectAck{
 				Id:         msg.Id,
-				LeaderPort: n.leaderPort,
+				LeaderPort: lp,
 			}, nil
 		}
 	}
 	conn := n.replicaConns[n.leaderId]
+	n.mu.Unlock()
 
 	return pb.NewCommunicationServiceClient(conn).Connect(ctx, msg)
 }
 
 func (n *Node) Bid(ctx context.Context, msg *pb.BidReq) (*pb.BidAck, error) {
+	n.mu.Lock()
 	if !n.activeAuction {
+		n.mu.Unlock()
 		return &pb.BidAck{
 			Result: &pb.BidAck_Exception{
 				Exception: &pb.Exception{
@@ -186,9 +216,11 @@ func (n *Node) Bid(ctx context.Context, msg *pb.BidReq) (*pb.BidAck, error) {
 				},
 			},
 		}
+		n.mu.Unlock()
 		n.synchronize(update)
 		return &pb.BidAck{Result: &pb.BidAck_Success{}}, nil
 	} else {
+		n.mu.Unlock()
 		return &pb.BidAck{
 			Result: &pb.BidAck_Failure{
 				Failure: &pb.Failure{
@@ -200,6 +232,8 @@ func (n *Node) Bid(ctx context.Context, msg *pb.BidReq) (*pb.BidAck, error) {
 }
 
 func (n *Node) Result(ctx context.Context, msg *pb.ResultReq) (*pb.ResultAck, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	if n.activeAuction {
 		return &pb.ResultAck{
 			Result: &pb.ResultAck_HighestBid{
@@ -215,20 +249,22 @@ func (n *Node) Result(ctx context.Context, msg *pb.ResultReq) (*pb.ResultAck, er
 	}
 }
 
-func (n *Node) isLeader() bool {
-	return n.leaderPort == n.port
-}
-
 func (n *Node) SyncReplicas(ctx context.Context, msg *pb.Update) (*pb.UpdateAck, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
 	switch r := msg.Update.(type) {
 	case *pb.Update_SyncAuctionreq:
-		n.winnerId = r.SyncAuctionreq.WinnerId
-		n.highestBid = r.SyncAuctionreq.HighestBid
+		if r.SyncAuctionreq.HighestBid > n.highestBid {
+			n.winnerId = r.SyncAuctionreq.WinnerId
+			n.highestBid = r.SyncAuctionreq.HighestBid
+		}
 	case *pb.Update_SyncClientReq:
-		n.cIdCount = r.SyncClientReq.CIdCount
+		if r.SyncClientReq.CIdCount > n.cIdCount {
+			n.cIdCount = r.SyncClientReq.CIdCount
+		}
 	case nil:
 	}
-
 	return &pb.UpdateAck{}, nil
 }
 
