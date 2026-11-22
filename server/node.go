@@ -30,6 +30,7 @@ type Node struct {
 	totalNodes    int32
 	replicaConns  map[int32]*grpc.ClientConn
 	mu            sync.Mutex
+	electMu       sync.Mutex
 }
 
 func main() {
@@ -149,9 +150,9 @@ func (n *Node) election() {
 }
 
 func (n *Node) Elect(ctx context.Context, msg *pb.ElectReq) (*pb.ElectAck, error) {
-	n.mu.Lock()
+	n.electMu.Lock()
 	lp := n.leaderPort
-	n.mu.Unlock()
+	n.electMu.Unlock()
 
 	return &pb.ElectAck{
 		LeaderPort: lp,
@@ -159,9 +160,11 @@ func (n *Node) Elect(ctx context.Context, msg *pb.ElectReq) (*pb.ElectAck, error
 }
 
 func (n *Node) Connect(ctx context.Context, msg *pb.ConnectReq) (*pb.ConnectAck, error) {
-	n.mu.Lock()
+	n.electMu.Lock()
 	lp := n.leaderPort
-	if n.leaderPort == n.port {
+	n.electMu.Unlock()
+	n.mu.Lock()
+	if lp == n.port {
 		if msg.Id == -1 {
 			n.cIdCount++
 			update := &pb.Update{

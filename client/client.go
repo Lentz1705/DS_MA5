@@ -23,7 +23,7 @@ type Client struct {
 
 func newClient() *Client {
 	cc, _ := grpc.NewClient("passthrough:///unused",
-    grpc.WithTransportCredentials(insecure.NewCredentials()),)
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
 
 	return &Client{id: -1, conn: cc}
 }
@@ -83,7 +83,7 @@ func (c *Client) loop(wg *sync.WaitGroup) {
 			if err != nil {
 				break
 			}
-			
+
 			resp, err := pb.NewCommunicationServiceClient(c.conn).Bid(ctx, &pb.BidReq{Amount: int32(bidAmount), Id: c.id})
 			if err != nil {
 				rescan = true
@@ -102,8 +102,9 @@ func (c *Client) loop(wg *sync.WaitGroup) {
 		case "result":
 			resp, err := pb.NewCommunicationServiceClient(c.conn).Result(ctx, &pb.ResultReq{})
 			if err != nil {
-				c.connect()
 				log.Println("Server unavailable. Try again")
+				c.connect()
+				rescan = true
 				break
 			}
 			switch r := resp.Result.(type) {
