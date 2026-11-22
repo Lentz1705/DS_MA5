@@ -87,7 +87,7 @@ func (c *Client) loop(wg *sync.WaitGroup) {
 			resp, err := pb.NewCommunicationServiceClient(c.conn).Bid(ctx, &pb.BidReq{Amount: int32(bidAmount), Id: c.id})
 			if err != nil {
 				rescan = true
-				log.Println("Server unavailable. Reconnecting")
+				log.Println("Server unavailable. Reconnecting...")
 				c.connect()
 				break
 			}
@@ -102,7 +102,7 @@ func (c *Client) loop(wg *sync.WaitGroup) {
 		case "result":
 			resp, err := pb.NewCommunicationServiceClient(c.conn).Result(ctx, &pb.ResultReq{})
 			if err != nil {
-				log.Println("Server unavailable. Try again")
+				log.Println("Server unavailable. Reconnecting...")
 				c.connect()
 				rescan = true
 				break

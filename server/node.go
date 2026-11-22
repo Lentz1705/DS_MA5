@@ -175,8 +175,8 @@ func (n *Node) Connect(ctx context.Context, msg *pb.ConnectReq) (*pb.ConnectAck,
 				},
 			}
 			idC := n.cIdCount
-			n.mu.Unlock()
 			n.synchronize(update)
+			n.mu.Unlock()
 			return &pb.ConnectAck{
 				Id:         idC,
 				LeaderPort: lp,
@@ -219,8 +219,8 @@ func (n *Node) Bid(ctx context.Context, msg *pb.BidReq) (*pb.BidAck, error) {
 				},
 			},
 		}
-		n.mu.Unlock()
 		n.synchronize(update)
+		n.mu.Unlock()
 		return &pb.BidAck{Result: &pb.BidAck_Success{}}, nil
 	} else {
 		n.mu.Unlock()
