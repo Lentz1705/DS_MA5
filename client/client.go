@@ -22,14 +22,15 @@ type Client struct {
 }
 
 func newClient() *Client {
-	return &Client{id: -1}
+	cc, _ := grpc.NewClient("passthrough:///unused",
+    grpc.WithTransportCredentials(insecure.NewCredentials()),)
+
+	return &Client{id: -1, conn: cc}
 }
 
 func main() {
 	c := newClient()
 
-	c.connect()
-	log.Printf("connected")
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go c.loop(&wg)
@@ -62,13 +63,19 @@ func (c *Client) connect() {
 func (c *Client) loop(wg *sync.WaitGroup) {
 	defer wg.Done()
 	var scanner = bufio.NewScanner(os.Stdin)
+	var args []string
+	rescan := false
 	for {
-		eof := scanner.Scan()
-		err := scanner.Err()
-		if !eof || err != nil {
-			return
+		if !rescan {
+			eof := scanner.Scan()
+			err := scanner.Err()
+			if !eof || err != nil {
+				return
+			}
+			args = strings.Split(scanner.Text(), " ")
+		} else {
+			rescan = !rescan
 		}
-		args := strings.Split(scanner.Text(), " ")
 		ctx := context.Background()
 		switch args[0] {
 		case "bid":
@@ -76,15 +83,17 @@ func (c *Client) loop(wg *sync.WaitGroup) {
 			if err != nil {
 				break
 			}
+			
 			resp, err := pb.NewCommunicationServiceClient(c.conn).Bid(ctx, &pb.BidReq{Amount: int32(bidAmount), Id: c.id})
 			if err != nil {
+				rescan = true
+				log.Println("Server unavailable. Reconnecting")
 				c.connect()
-				log.Println("Server unavailable. Try again")
 				break
 			}
 			switch r := resp.Result.(type) {
 			case *pb.BidAck_Success:
-				log.Printf("%d was a Succesful bid. You are now winning", bidAmount)
+				log.Printf("%d was a Successful bid. You are now winning", bidAmount)
 			case *pb.BidAck_Failure:
 				log.Println(r.Failure.Reason)
 			case *pb.BidAck_Exception:
